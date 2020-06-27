@@ -1,63 +1,13 @@
-import abc
-import enum
 import inspect
 import logging
 from functools import partial
-from typing import Optional, Dict, List, Any, Union
+from inspect import _empty
+from typing import Optional, Dict, List, Any
+import xml.dom.minidom
 
-
-class RefType(int, enum.Enum):
-    Id = 1
-    Cls = 2
-
-
-class Ref(abc.ABC):
-    def __init__(self, type: RefType, target: str):
-        self.type = type
-        self.target = target
-
-    @abc.abstractmethod
-    def isDepNode(self, bean) -> bool:
-        pass
-
-    def __eq__(self, other):
-        return self.type == other.type and self.target == other.target
-
-    def __hash__(self):
-        return hash("{}||{}".format(self.type, self.target))
-
-    def __repr__(self):
-        return "<%s %s>" % (self.__class__.__name__, self.target)
-
-
-class Bean:
-    def __init__(self, cls: type, singleton: bool, id: str, params: Dict[str, Union[Ref, Any]]):
-        self.cls = cls
-        self.params = params
-        self.id = id
-        self.singleton = singleton
-
-    def __repr__(self):
-        return "<Bean id=%s singleton=%s cls=%s self.params=%s>" % (
-            self.id, self.singleton, self.cls.__qualname__, self.params)
-
-
-class IdRef(Ref):
-    def __init__(self, tgt: str):
-        super(IdRef, self).__init__(RefType.Id, tgt)
-
-    def isDepNode(self, bean: Bean) -> bool:
-        return bean.id == self.target
-
-
-class ClsRef(Ref):
-    def __init__(self, tgt: Union[type, str]):
-        if isinstance(tgt, type):
-            tgt = tgt.__qualname__
-        super(ClsRef, self).__init__(RefType.Cls, tgt)
-
-    def isDepNode(self, bean: Bean) -> bool:
-        return bean.cls.__qualname__ == self.target
+from di.bean import Bean, Param, ParamType
+from di.ref import Ref, ClsRef, RefType, IdRef
+from di.utils import get_cls_name, get_cls_from_name
 
 
 class Context:
@@ -68,17 +18,62 @@ class Context:
         self.singleton_cache: Dict[Ref, Any] = {}
         self.logger = logging.getLogger(__name__ + "-" + str(id(self))[:4])
 
-    def _get_cls_name(self, cls: type) -> str:
-        return cls.__qualname__
+    @property
+    def beans(self) -> List[Bean]:
+        return list(self.id_map.values())
 
-    def _auto_detect_cls_param_refs(self, cls: type) -> Dict[str, Ref]:
-        """探测目标类初始化参数中的Ref,采用ClsRef策略，并排除基本类型．"""
-        return {
-            p.name: ClsRef(p.annotation)
-            for p in
-            inspect.signature(cls).parameters.values()
-            if p.default == inspect._empty and p.annotation not in (int, float, str, dict, list, tuple, set)
-        }
+    @property
+    def beans_xml(self) -> str:
+        doc = xml.dom.minidom.Document()
+        beans_elem = doc.createElement('beans')
+        for bean in self.beans:
+            beans_elem.appendChild(bean.to_xml())
+        doc.appendChild(beans_elem)
+        return doc.toprettyxml()
+
+    def build_params(self, cls: type, refs: Dict[str, Ref], consts: Dict[str, Any]) -> List[Param]:
+        """
+        直接注册Bean时，构造Bean的Params. 若所给参数不满足目标类初始化条件，则抛出异常
+
+        1. 引用Refs及常量Consts两定义中不可同时对同一参数进行定义
+        2. 不在Refs及Consts中的参数，优先以默认值补充至为Consts定义中
+        3. 不在Refs及Consts中的参数，且不存在默认值，则以ClsRef形式补充至Consts定义中
+        4. 存在不在Refs及Consts中的参数，且不存在默认值并未基本类型的参数，直接抛出异常
+        """
+
+        # 校验refs及consts是否存在冲突项
+        repeated_params = set(refs.keys()).intersection(set(consts.keys()))
+        if len(repeated_params) > 0:
+            raise ValueError("duplicated params {} for cls {}".format(
+                repeated_params, get_cls_name(cls)
+            ))
+
+        # 构造每个参数的Ref
+        def_params = list(inspect.signature(cls).parameters.values())
+        params: List[Param] = []
+        for dp in def_params:
+            if dp.name in consts:  # 指定常量
+                params.append(Param(
+                    name=dp.name,
+                    type=ParamType.Const,
+                    value=consts[dp.name]
+                ))
+            elif dp.name in refs:  # 指定引用
+                params.append(Param(
+                    name=dp.name,
+                    type=ParamType.Ref,
+                    value=refs[dp.name]
+                ))
+            else:  # 默认处理逻辑
+                if dp.default is not _empty:  # 优先使用默认参数
+                    params.append(Param(name=dp.name, type=ParamType.Const, value=dp.default))
+                else:
+                    if dp.annotation in (int, float, str, list, set, dict, tuple):
+                        raise ValueError("Basic type params must have default value or defined in consts.")
+                    else:
+                        params.append(Param(name=dp.name, type=ParamType.Ref, value=ClsRef(dp.annotation)))
+
+        return params
 
     def register(self,
                  cls: type,
@@ -87,24 +82,30 @@ class Context:
                  refs: Optional[Dict[str, Ref]] = None,
                  consts: Optional[Dict[str, Any]] = None):
         """注册Bean"""
-        id = id or self._get_cls_name(cls)
+        id = id or get_cls_name(cls)
 
-        params = self._auto_detect_cls_param_refs(cls)
-        if refs:
-            params.update(refs)
-        if consts:
-            params.update(consts)
+        params = self.build_params(cls, refs or {}, consts or {})
 
-        if id in self.id_map:
-            raise ValueError("ID {} existed.".format(id))
-        bean = Bean(cls=cls, id=id, params=params, singleton=singleton)
+        bean = Bean(cls=get_cls_name(cls),
+                    id=id,
+                    params=params,
+                    singleton=singleton)
 
         self.id_map[id] = bean
-        self.cls_map.setdefault(self._get_cls_name(cls), []).append(bean)
+        self.cls_map.setdefault(get_cls_name(cls), []).append(bean)
 
-    def _find_bean(self, ref: Ref) -> Bean:
+    def find_bean_by_ref(self, ref: Ref) -> Bean:
         """通过ref找到对于的bean"""
-        valid = list(filter(lambda dn: ref.isDepNode(dn), self.id_map.values()))
+
+        def is_ref_bean(bean: Bean) -> bool:
+            if ref.type is RefType.Cls:
+                return bean.cls == ref.target
+            elif ref.type is RefType.Id:
+                return bean.id == ref.target
+            else:
+                raise ValueError("Unkown RefType {}".format(ref.type))
+
+        valid = list(filter(is_ref_bean, self.id_map.values()))
         if len(valid) == 0:
             raise ValueError("Ref [{}] not existed.".format(ref))
         elif len(valid) > 1:
@@ -120,36 +121,34 @@ class Context:
         """设置singleton缓存"""
         self.singleton_cache[ref] = ins
 
-    def _pre_check_instance_params(self, cls: type, params: Dict[str, Any]):
-        """检查参数是否满足目标初始化需求"""
-        for v in inspect.signature(cls).parameters.values():
-            if v.default == inspect._empty:
-                if v.name not in params:
-                    raise ValueError("Lack of initial param %s for %s" % (v.name, cls))
-
     def instance(self, ref: Ref, chain_depth: int = 1) -> Any:
         """获取实例对象"""
-        tgt = self._find_bean(ref)
+        bean = self.find_bean_by_ref(ref)
 
-        def log(level, msg):
-            getattr(self.logger, level)(" " + ">" * chain_depth + ' ' + msg)
+        def debug(msg):
+            getattr(self.logger, 'debug')(" " + ">" * chain_depth + ' ' + msg)
 
-        debug = partial(log, level='debug')
 
-        if tgt.singleton and self._get_singleton_cache(ref):
-            debug("retrieved {}".format(tgt))
+        if bean.singleton and self._get_singleton_cache(ref):
+            debug("retrieved {}".format(bean))
             return self._get_singleton_cache(ref)
 
-        debug("instancing {}".format(tgt))
+        debug("instancing {}".format(bean))
 
-        params = {pname: (self.instance(pval, chain_depth + 1) if isinstance(pval, Ref) else pval) for pname, pval in
-                  tgt.params.items()}
-        self._pre_check_instance_params(tgt.cls, params)
-        ins = tgt.cls(**params)
+        actual_params: Dict[str, Any] = {}
+        for p in bean.params:
+            if p.type is ParamType.Const:
+                actual_params[p.name] = p.value
+            elif p.type is ParamType.Ref:
+                actual_params[p.name] = self.instance(p.value, chain_depth+1)
+            else:
+                raise ValueError("Unkown ParamType {}".format(p.type))
+
+        ins = get_cls_from_name(bean.cls)(**actual_params)
 
         self._set_singleton_cache(ref, ins)
 
-        debug("instanced {}".format(tgt))
+        debug("instanced {}".format(bean))
 
         return ins
 
