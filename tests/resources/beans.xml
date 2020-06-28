@@ -1,0 +1,32 @@
+<?xml version="1.0" ?>
+<beans>
+    <bean cls="tests.app.Restaurant" id="rest" singleton="true">
+        <property name="manager" ref="id:manager-staff"/>
+        <property name="kitchen" ref="cls:tests.app.kitchen.Kitchen"/>
+        <property name="eatingroom" ref="cls:tests.app.eatingroom.EatingRoom"/>
+        <property name="cashier" ref="cls:tests.app.cashier.Cashier"/>
+    </bean>
+    <bean cls="tests.app.kitchen.Kitchen" id="tests.app.kitchen.Kitchen" singleton="true">
+        <property name="staff" ref="id:kitchen-staff"/>
+        <property name="number" value="1" value-type="int"/>
+    </bean>
+    <bean cls="tests.app.cashier.Cashier" id="tests.app.cashier.Cashier" singleton="true">
+        <property name="staff" ref="id:manager-staff"/>
+    </bean>
+    <bean cls="tests.app.eatingroom.EatingRoom" id="tests.app.eatingroom.EatingRoom" singleton="true">
+        <property name="staff" ref="id:eatingroom-staff"/>
+        <property name="seat" ref="cls:tests.app.seat.Seat"/>
+    </bean>
+    <bean cls="tests.app.seat.Seat" id="tests.app.seat.Seat" singleton="true">
+        <property name="id" value="default-seat" value-type="str"/>
+    </bean>
+    <bean cls="tests.app.staff.Staff" id="kitchen-staff" singleton="true">
+        <property name="name" value="kitchen-staff" value-type="str"/>
+    </bean>
+    <bean cls="tests.app.staff.Staff" id="eatingroom-staff" singleton="true">
+        <property name="name" value="eatingroom-staff" value-type="str"/>
+    </bean>
+    <bean cls="tests.app.staff.Staff" id="manager-staff" singleton="true">
+        <property name="name" value="manager-staff" value-type="str"/>
+    </bean>
+</beans>
