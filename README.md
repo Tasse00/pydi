@@ -70,7 +70,7 @@ print(ctx.format_beans_xml())
 ### Register by XML File
 
 beans.xml
-```
+```xml
 <?xml version="1.0" ?>
 <beans>
 	<bean cls="app.Car" id="car" singleton="true">
