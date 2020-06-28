@@ -6,6 +6,11 @@ simple python dependency injection framwork
 
 just like java spring-framework. 
 
+## Install
+
+```shell script
+pip install simple-pydi
+```
 
 ## Usage
 
