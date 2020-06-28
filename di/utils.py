@@ -2,7 +2,7 @@ import importlib
 
 
 def get_cls_name(cls: type) -> str:
-    return cls.__qualname__
+    return cls.__module__ + '.' + cls.__qualname__
 
 
 def get_cls_from_name(cls_name: str) -> type:

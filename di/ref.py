@@ -5,9 +5,9 @@ from typing import Union
 from di.utils import get_cls_name
 
 
-class RefType(int, enum.Enum):
-    Id = 1
-    Cls = 2
+class RefType(str, enum.Enum):
+    Id = "id"
+    Cls = "cls"
 
 
 class Ref(abc.ABC):
@@ -23,7 +23,15 @@ class Ref(abc.ABC):
         return hash("{}||{}".format(self.type, self.target))
 
     def __repr__(self):
-        return "%s:%s" % (self.type.name, self.target)
+        return "<%s:%s>" % (self.type.value, self.target)
+
+    def to_expr(self) -> str:
+        return "%s:%s" % (self.type.value, self.target)
+
+    @classmethod
+    def from_expr(cls, expr: str) -> 'Ref':
+        type_val, target = expr.split(':')
+        return cls(type=RefType(type_val), target=target)
 
 
 class IdRef(Ref):
