@@ -1,7 +1,6 @@
 import inspect
 import json
 import logging
-from inspect import _empty
 from typing import Optional, Dict, List, Any, Union
 import xml.dom.minidom
 
@@ -48,7 +47,8 @@ class Context:
             ))
 
         # 构造每个参数的Ref
-        def_params = list(inspect.signature(cls).parameters.values())
+        sig = inspect.signature(cls)
+        def_params = list(sig.parameters.values())
         params: List[Property] = []
         for dp in def_params:
             if dp.name in consts:  # 指定常量
@@ -64,7 +64,7 @@ class Context:
                     value=refs[dp.name]
                 ))
             else:  # 默认处理逻辑
-                if dp.default is not _empty:  # 优先使用默认参数
+                if dp.default is not sig.empty:  # 优先使用默认参数
                     params.append(Property(name=dp.name, type=PropertyType.Const, value=dp.default))
                 else:
                     if dp.annotation in (int, float, str, list, set, dict, tuple):
